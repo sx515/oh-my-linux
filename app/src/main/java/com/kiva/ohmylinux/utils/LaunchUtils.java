@@ -116,7 +116,7 @@ public class LaunchUtils {
     public static Intent createTerminalIntent(String windowTitle, String initCommand) {
         Intent i = new Intent();
         i.setAction("jackpal.androidterm.RUN_SCRIPT");
-        i.setClassName("com.romide.terminal", "com.romide.terminal.activity.RemoteInterface");
+        i.addCategory(Intent.CATEGORY_DEFAULT);
         i.putExtra("jackpal.androidterm.iWindowTitle", windowTitle);
         i.putExtra("jackpal.androidterm.iInitialCommand", initCommand);
         return i;
