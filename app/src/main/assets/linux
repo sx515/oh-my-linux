@@ -1,0 +1,1167 @@
+#!/system/bin/bash
+
+# Copyright (C) 2015  Joker
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+###########################
+#
+# K-linux-arm loader
+#
+###########################
+
+# section("host_loader");
+shopt -s expand_aliases
+
+# 配置环境变量
+bin=/system/bin
+bbox=$bin/busybox
+mnt=/data/local/linux
+already_mount=false
+
+export USER=root
+export PATH=$bin:/usr/bin:/usr/local/bin:/usr/sbin:/bin:/usr/local/sbin:/usr/games:$PATH
+export TERM=linux
+export HOME=/root
+export LD_PRELOAD=""
+
+unset LOCPATH VIMRUNTIME LANG JAVA_HOME
+
+# 临时文件夹
+mytmpdir="/data/local/tmp/klinux.tmpdir"
+
+# 分区或者镜像
+device=/dev/block/vold/179:66
+# 分区格式
+device_type=ext4
+
+# 启动的脚本
+boot=/boot/krub.d/krub
+# 磁盘的分区表
+disktab_suc="$mnt/boot/krub.d/etc/disk-table"
+disktab_user="~/linux-disk"
+disktab_tmp="$mytmpdir/disktab.$$.$RANDOM"
+
+# 参数标志
+nosd0=false
+nosd1=false
+noclear=false
+
+wait_time=10
+default_system_idx=0
+
+# 多个系统
+systems_title[0]="默认系统"
+systems_root[0]="$mnt"
+systems_index=1
+
+
+SEC_LINUX="Linux"
+SEC_DISK="Disk"
+
+ITEM_DEVICE="Device"
+ITEM_MNT="MountPoint"
+ITEM_FSTYPE="FileSystem"
+
+
+alias clear='if [[ "$noclear" != true ]];then command clear; fi'
+
+function init_myself() {
+  if [[ ! -d $mytmpdir ]];then
+    $bbox mkdir -p -m 755 $mytmpdir
+  fi
+  
+  $bbox rm -f $disktab_tmp &>/dev/null
+}
+
+
+# 如果 mnt 被修改，调用此函数
+function update_var_depend_mnt() {
+  disktab_suc=$mnt/boot/krub.d/etc/disk-table
+  systems_root[0]="$mnt"
+}
+
+
+
+# 例子见: klinux-cfg-example.cfg
+function klinux_parse_cfg() {
+  local cfg="$1"
+  
+  if [[ ! -f "$cfg" ]];then
+    return
+  fi
+  
+  local linux_device=$(ini $cfg $SEC_LINUX $ITEM_DEVICE)
+  if [[ "$linux_device"x != ""x ]];then
+    device="$linux_device"
+  fi
+  
+  linux_fstype="$(ini $cfg $SEC_LINUX $ITEM_FSTYPE)"
+  if [[ "$linux_fstype"x != ""x ]];then
+    device_type="$linux_fstype"
+  fi
+    
+  linux_mnt="$(ini $cfg $SEC_LINUX $ITEM_MNT)"
+  if [[ "$linux_mnt"x != ""x ]];then
+    mnt="$linux_mnt"
+    update_var_depend_mnt
+  fi
+  
+  local index=0
+  
+  local ddevice
+  for ddevice in $(ini $cfg $SEC_DISK $ITEM_DEVICE );do
+    if [[ "$ddevice"x == ""x ]];then
+      error_exit "$SEC_DISK[$index] $ITEM_DEVICE 不可为空."
+    fi
+    
+    local sub=0
+    
+    # 找到挂载点
+    local dmnt
+    for dmnt in $(ini $cfg $SEC_DISK $ITEM_MNT);do
+      if (( index == sub ));then
+        break
+      fi
+      (( sub++ ))
+    done
+    if [[ "$dmnt"x == ""x ]];then
+      dmnt="/mnt/Disk-$index"
+    fi
+    
+    sub=0
+    
+    # 找到分区类型
+    local dtype
+    for dtype in $(ini $cfg $SEC_DISK $ITEM_FSTYPE);do
+      if (( index == sub ));then
+        break
+      fi
+      (( sub++ ))
+    done
+    if [[ "$dtype"x == ""x ]];then
+      dtype="ext4"
+    fi
+    
+    echo "${ddevice}::${dmnt}::${dtype}" >> $disktab_tmp
+    
+    (( index++ ))
+  done
+}
+
+
+
+function klinux_create() {
+  # -t 类型 ext{2,3,4}
+  # -s 大小 M 为单位
+  # -l 使用 loop
+  # -d 使用分区
+  # -p 路径 /dev/... 或者 xxx.img
+  # -r 根文件系统
+  # -b boot文件系统
+  local opt="$($bbox getopt t:s:p:r:b:ld $@ 2>/dev/null)"
+  
+  local type="ext4"
+  local size="100"
+  local flag_loop=true
+  local flag_device=false
+  local path="/sdcard/kl.img"
+  local roottar="/sdcard/KLinux-rootfs.tgz"
+  
+  eval set -- $opt
+  
+  while [[ ! -z "$1" ]];do
+    case "$1" in
+      "-t" ) 
+        shift
+        if [[ "$1"x == ""x ]];then
+          error_exit "-t: 必须有一个参数被指定";
+        fi
+        if [[ "$1" == "ext2" || "$1" == "EXT2" ]];then
+          type="ext2"
+        elif [[ "$1" == "ext3" || "$1" == "EXT3" ]];then
+          type="ext3"
+        elif [[ "$1" == "ext4" || "$1" == "EXT4" ]];then
+          type="ext4"
+        else
+          error_exit "不支持的分区: $1";
+        fi 
+        shift ;;
+        
+      "-s" )
+        shift
+        if [[ "$1"x == ""x ]];then
+          error_exit "-s: 必须有一个参数被指定";
+        fi
+        local stmp="${1//[0-9]/}"
+        if [[ "$stmp"x != ""x ]];then
+          error_exit "-s: 参数必须是一个数字";
+        fi
+        size="$1"
+        shift ;;
+        
+      "-l" )
+        shift
+        flag_loop=true
+        flag_device=false ;;
+        
+      "-d" )
+        shift
+        flag_loop=false
+        flag_device=true ;;
+        
+      "-p" )
+        shift
+        if [[ "$1"x == ""x ]];then
+          error_exit "-p: 必须有一个参数被指定";
+        fi
+        path="$1"
+        shift ;;
+        
+      "-r" )
+        shift
+        if [[ "$1"x == ""x ]];then
+          error_exit "-r: 必须有一个参数被指定";
+        fi
+        if [[ ! -f "$1" ]];then
+          error_exit "$1: 文件不存在";
+        fi
+        roottar="$1"
+        shift ;;
+        
+      "--" ) 
+        shift
+        break ;;
+    esac
+    
+  done
+  
+  #echo "-----------------> Debug"
+  #echo "type : $type"
+  #echo "size : $size"
+  #echo "loop : $flag_loop"
+  #echo "devi : $flag_device"
+  #echo "path : $path"
+  #echo "root : $roottar"
+  #echo "-----------------> Debug"
+  
+  free_line
+  echo -ne "读取系统信息... 0%\r"
+  local fscmd="mkfs"
+  local fsarg=""
+  case "$type" in
+    "ext4" )  fscmd="mkfs.ext4"
+            fsarg="" ;;
+    "ext3" )  fscmd="mke2fs"
+            fsarg="-j -F" ;;
+    "ext2" )  fscmd="mke2fs"
+            fsarg="-F" ;;
+  esac
+  
+  if [[ "$($bbox which $fscmd)"x == ""x ]];then
+    echo
+    error_exit "无法找到可以格式化 $type 文件系统的工具";
+  fi
+  
+  free_line
+  echo -ne "读取系统信息... 25%\r"
+  if [[ -f /system/framework/framework-res.apk ]];then
+    local tmnt="/data/local/tmp/.mylinux-$$"
+    local log="/data/local/tmp/.mylinuxlog-$$.txt"
+  else
+    local tmnt="/tmp/.mylinux-$$"
+    local log="/tmp/.mylinuxlog-$$.txt"
+  fi
+  
+  free_line
+  echo -ne "读取系统信息... 50%\r"
+  if [[ ! -d $tmnt ]];then
+    $bbox mkdir -p -m 755 $tmnt &>$log || {
+      echo
+      error_exit "无法创建临时挂载点失败";
+    }
+  fi
+  
+  free_line
+  echo -ne "读取系统信息... 100%\r\n"
+  
+  free_line
+  echo -ne "创建系统 [准备]... 0%\r"
+  if [[ "$flag_loop" == true ]];then
+    free_line
+    echo -ne "创建系统 [制作镜像]... 0%\r"
+    dd if=/dev/zero of=$path bs=1M count=$size &>>$log || {
+      echo
+      error_exit "无法创建虚拟镜像";
+    }
+    free_line
+    echo -ne "创建系统 [格式化镜像]... 25%\r"
+    $fscmd $fsarg $path &>>$log || {
+      echo
+      error_exit "无法格式化镜像"
+    }
+  fi
+  
+  free_line
+  echo -ne "创建系统 [挂载文件系统]... 30%\r"
+  $bbox mount -t $type -o rw $path $tmnt &>>$log || {
+    echo
+    error_exit "无法挂载文件系统"
+  }
+  
+  free_line
+  echo -ne "创建系统 [安装根文件系统]... 50%\r"
+  $bbox tar xf $roottar -C $tmnt &>>$log || {
+    echo
+    error_exit "无法安装根文件系统"
+  }
+  
+  free_line
+  echo -ne "创建系统 [安装启动文件]... 75%\r"
+  klinux_install_loader "$tmnt"
+  
+  free_line
+  echo -ne "创建系统 [卸载文件系统]... 85%\r"
+  local pid
+  for pid in `$bbox lsof | $bbox grep $tmnt | $bbox sed -e's/  / /g' | $bbox cut -d' ' -f2`; do
+    $bbox kill -9 $pid &>>$log
+  done
+  $bbox umount $tmnt &>>$log || {
+    echo
+    error_exit "无法卸载文件系统"
+  }
+  
+  free_line
+  echo -ne "创建系统 [清理]... 95%\r"
+  $bbox rm -f $log
+  $bbox rm -rf $tmnt
+  
+  free_line
+  echo -ne "创建系统 [完成] 100%\r\n"
+}
+
+
+
+#  格式:
+#  img_file::mount_point::fs_type
+#  /sdcard/c.img::/media/c::ext4
+#  /sdcard/d.img::/usr/disk/d::ext2
+#  /data/local/e.img::/opt/e::vfat
+
+function klinux_disk(){
+  local tab="$1"
+  if [[ ! -f "$tab" ]];then
+    return
+  fi
+  
+  echo " * [Loader] 挂载磁盘分区"
+  echo -n "" > $disktab_suc
+  local line
+  while read line; do
+    if [[ "$line"x == ""x ]];then
+      continue
+    fi
+    
+    local img="$(echo $line | $bbox awk -F'::' '{print $1}')"
+    local mnp="$(echo $line | $bbox awk -F'::' '{print $2}')"
+    local mtype="$(echo $line | $bbox awk -F'::' '{print $3}')"
+    
+    if [[ "$img"x == ""x || "$mnp"x == ""x ]];then
+      continue
+    fi
+    
+    if [[ "$mtype"x == ""x ]];then
+      mtype="ext4"
+    fi
+    
+    local realmnp="$mnt/$mnp"
+    
+    if [[ ! -f "$img" ]];then
+      echo " * [Loader] 磁盘未找到: $img"
+      continue
+    fi
+    
+    if [[ ! -d "$realmnp" ]];then
+      $bbox mkdir -m 755 -p "$realmnp"
+    fi
+    
+    echo " * 挂载 $($bbox basename $img) 到 $mnp"
+    $bbox mount -o rw -t "$mtype" "$img" "$realmnp"
+    if [[ "$?" == "0" ]];then
+      echo "$realmnp" >> $disktab_suc
+      
+      # 检测是否是一个系统
+      if [[ -x "$realmnp/$boot" ]];then
+        local index=$systems_index
+        systems_title[index]="来自 $mnp"
+        systems_root[index]="$realmnp"
+        let systems_index++
+      fi
+      
+    else
+      echo " * 挂载磁盘 $(basename $img) 失败"
+    fi
+    
+  done < $tab
+}
+
+
+
+# 卸载
+function klinux_umount (){
+  info "卸载文件系统"
+  if [[ "$nosd1" != true ]];then
+    $bbox umount $mnt/sdcard1 2>/dev/null
+  fi
+  if [[ "$nosd0" != true ]];then
+    $bbox umount $mnt/sdcard0 2>/dev/null
+  fi
+  $bbox umount $mnt/dev/pts 2>/dev/null
+  $bbox umount $mnt/dev  2>/dev/null
+  $bbox umount $mnt/proc 2>/dev/null
+  $bbox umount $mnt/sys 2>/dev/null
+  $bbox umount $mnt 2>/dev/null
+  info.ok
+}
+
+
+
+function klinux_udisk() {
+  if [[ ! -f "$disktab_suc" ]];then
+    return
+  fi
+  
+  local line
+  while read line;do
+    
+    if [[ "$line"x == ""x ]];then
+      continue
+    fi
+    
+    info "卸载磁盘 ${line##$mnt}"
+    $bbox umount "$line"
+    if [[ "$?" != "0" ]];then
+      info.fail
+    else
+      info.ok
+      $bbox rmdir "$line" &>/dev/null
+    fi
+    
+  done < $disktab_suc
+  echo > $disktab_suc
+}
+
+
+
+# 挂载
+function klinux_mount(){
+  info "挂载 Linux 分区"
+  if [[ ! -d $mnt ]];then
+    $bbox mkdir -p -m 755 $mnt
+  fi
+  
+  $bbox mount -o rw -t $device_type $device $mnt
+  if [ $? -ne 0 ];then
+    info.fail
+    error_exit "无法挂载 Linux 分区!"; 
+  fi
+  info.ok
+  
+  info "挂载 /dev/pts"
+  $bbox mount -t devpts devpts $mnt/dev/pts
+  if [ $? -ne 0 ];then 
+    info.fail
+    error_exit "无法挂载 /dev/pts!"; 
+  fi
+  info.ok
+  
+  info "挂载 /proc"
+  $bbox mount -t proc proc $mnt/proc
+  if [ $? -ne 0 ];then 
+    info.fail
+    error_exit "无法挂载 /proc!"; 
+  fi
+  info.ok
+  
+  info "挂载 /sys"
+  $bbox mount -t sysfs sysfs $mnt/sys
+  if [ $? -ne 0 ];then
+    info.fail
+    error_exit "无法挂载 /sys!"; 
+  fi
+  info.ok
+  
+  if [[ "$nosd0" != true ]];then
+    info "挂载 /storage/sdcard0"
+    $bbox mount -o bind /storage/sdcard0 $mnt/sdcard0
+    if [ $? -ne 0 ];then
+      info.fail
+      error_exit "无法挂载 /storage/sdcard0!";
+    fi
+    info.ok
+  fi
+  
+  if [[ "$nosd1" != true ]];then
+    info "挂载 /storage/sdcard1"
+    $bbox mount -o bind /storage/sdcard1 $mnt/sdcard1
+    if [ $? -ne 0 ];then
+      info.fail
+      error_exit "无法挂载 /storage/sdcard1!";
+    fi
+    info.ok
+  fi
+}
+
+
+# 网络
+function klinux_network(){
+  #echo -n " * [Loader] 网络: "
+  $bbox sysctl -w net.ipv4.ip_forward=1 &>/dev/null
+  if [ $? -ne 0 ];then 
+    error_exit "无法获取网络信息"
+  fi
+}
+
+
+# 第一次使用
+function klinux_first_use(){
+  :
+}
+
+
+function klinux_start_svc() {
+  return
+  local svc
+  for svc in $(ls $mnt/etc/init.d); do
+    info "启动服务 $svc"
+    usleep $((RANDOM * 10)) &>/dev/null
+    info.ok
+  done
+}
+
+function klinux_stop_svc() {
+  return
+  local svc
+  for svc in $(ls $mnt/etc/init.d); do
+    info "停止服务 $svc"
+    usleep $((RANDOM * 10)) &>/dev/null
+    info.ok
+  done
+}
+
+
+# 进入
+function klinux_chroot(){
+  local arg=
+  local mmnt="$mnt"
+  local mboot="$boot"
+  
+  if [[ "$systems_index" -gt 1 ]];then
+    echo
+    echo
+    echo "   Klinux 启动管理器"
+    echo "   ------------------------------------------------"
+    echo "      磁盘分区中查找到了特殊的分区"
+    echo "      他们可以被 Klinux 引导并启动"
+    echo "      请选择一个将要启动的系统"
+    echo
+    local i
+    for (( i=0 ; i<systems_index ; i++ ));do
+      echo "       $i - ${systems_title[i]}"
+    done
+    echo
+    echo "   ------------------------------------------------"
+    echo "   ${wait_time}秒后默认进入: ${systems_title[0]}"
+    echo -n "   您的选择: "
+    local num="$default_system_idx"
+    read -t $wait_time num
+    echo
+    echo
+    local root="${systems_root[num]}"
+    if [[ "$root"x != ""x ]];then
+      mmnt="$root"
+    fi
+  fi
+  
+  if [[ "$already_mount" != true ]];then
+    #echo " * [Kernel] 初始化内核服务"
+    info "初始化内核服务"
+    info.ok
+    klinux_start_svc
+  else
+    arg='already-init'
+  fi
+  $bbox chroot  $mmnt $mboot $arg $@
+  if [[ "$already_mount" != true ]];then
+    #echo " * [Kernel] 停止内核服务"
+    info "停止内核服务"
+    info.ok
+    klinux_stop_svc
+  fi
+}
+
+
+# 关闭
+function klinux_kill(){
+  #echo -n " * 关闭 Linux ARM                             "
+  info "停止所有进程"
+  for pid in $($bbox lsof | $bbox grep $mnt | $bbox sed -e's/  / /g' | $bbox cut -d' ' -f2); do
+    $bbox kill -9 $pid >/dev/null 2>&1
+  done
+  #gprint "[ OK ]"
+  info.ok
+}
+
+
+
+function klinux_install_loader() {
+  local dev="$1"
+  local devtype="$2"
+  local dir isdev
+  
+  if [[ "$devtype"x == ""x ]];then
+    devtype="$device_type"
+  fi
+  
+  if [[ "$dev"x == ""x ]];then
+    error_exit "没有可以安装加载器的设备";
+  fi
+  
+  if [[ -d "$dev" ]];then
+    isdev=false
+    dir="$dev"
+  else
+    isdev=true
+    $bbox mount -o rw -t $devtype $dev $mnt || {
+      error_exit "无法挂载 $dev"
+    }
+    dir="$mnt"
+  fi
+  
+  function mmkdir() {
+    $bbox mkdir -m 755 "$1"
+    $bbox chown 0.0 "$1"
+  }
+  
+  function mtouch() {
+    $bbox touch "$1"
+    $bbox chmod 644 "$1"
+    $bbox chown 0.0 "$1"
+  }
+  
+  if [[ ! -d "$dir/boot" ]];then
+    mmkdir "$dir/boot"
+  fi
+  
+  if [[ -d "$dir/boot/krub.d" ]];then
+    $bbox rm -rf "$dir/boot/krub.d"
+  fi
+  
+  mmkdir "$dir/boot/krub.d"
+  mmkdir "$dir/boot/krub.d/etc"
+  mmkdir "$dir/boot/krub.d/conf.d"
+  
+  mtouch "$dir/boot/krub.d/etc/disk-table"
+  mtouch "$dir/boot/krub.d/etc/welcome"
+  mtouch "$dir/boot/krub.d/krub"
+  
+  chmod 755 "$dir/boot/krub.d/krub"
+  
+  echo "$(get_section welcome_text)" > "$dir/boot/krub.d/etc/welcome"
+  echo "$(get_section target_loader)" > "$dir/boot/krub.d/krub"
+  
+  local pwd="$PWD"
+  cd "$dir/boot"
+  $bbox ln -sf ./krub.d/krub ./krub
+  cd "$pwd"
+  
+  if [[ "$isdev" == true ]];then
+    $bbox umount "$dir"
+  fi
+}
+
+
+
+# 默认启动
+function klinux_main(){
+  clear
+  echo " * 启动 Linux ARM"
+  echo
+  if [[ -d $mnt/usr ]];then
+    already_mount=true
+    echo " * [Loader] 分区已被挂载 - 直接登陆"
+  else
+    klinux_mount
+    if [[ -f $disktab_user ]];then
+      cat $disktab_user >> $disktab_tmp
+    fi
+    klinux_disk $disktab_tmp
+    klinux_network
+    klinux_first_use
+  fi
+  klinux_chroot $@
+  if [[ "$already_mount" != true ]];then
+    klinux_kill
+    klinux_udisk
+    klinux_umount
+  fi
+  echo
+}
+
+
+
+function klinux_help() {
+  klinux_version
+  get_section "help_text"
+  return 0
+}
+
+
+
+function klinux_version() {
+  get_section "version_text"
+  return 0
+}
+
+
+function rprint() {
+  echo -ne "\033[1m\033[31m$@\033[0m"
+}
+
+function gprint() {
+  echo -ne "\033[1m\033[32m$@\033[0m"
+}
+
+function info() {
+  echo -ne "\r        $@\r "
+}
+
+function info.ok() {
+  echo -ne "\r ["
+  gprint " OK "
+  echo -e "] "
+}
+
+function info.fail() {
+  echo -ne "\r ["
+  rprint "FAIL"
+  echo -e "] "
+}
+
+
+function error_exit() {
+  echo -n " * [Loader] 错误: "
+  rprint "$@"
+  echo
+  exit 1
+}
+
+function free_line() {
+  printf "%50c\r" " "
+}
+
+
+# ini 文件读写库
+function ini.read() {
+  local INIFILE="$1"
+  local SECTION="$2"
+  local ITEM="$3"
+  
+  $bbox awk -F '=' '/\['$SECTION'\]/{isSec=1}isSec==1 && $1~/'$ITEM'/{print $2;isSec=0}' $INIFILE
+}
+
+
+function ini.write() {
+  local INIFILE="$1"
+  local SECTION="$2"
+  local ITEM="$3"
+  local NEWVAL="${@:4}"
+  $bbox sed -i \
+    "/^\[$SECTION\]/,/^\[/ {/^\[$SECTION\]/b;/^\[/b;s/^$ITEM*=.*/$ITEM=$NEWVAL/g;}" "$INIFILE"
+}
+
+function ini() {
+  if [[ "$4"x == ""x ]] ;then
+    ini.read "$1" "$2" "$3"
+  else
+    ini.write "$1" "$2" "$3" "${@:4}"
+  fi
+}
+
+function get_section() {
+  local start="# section(\\\"$1\\\");"
+  local end="# end(\\\"$1\\\");"
+  
+  $bbox awk "
+    \$0 == \"${start}\" {
+      flag = 1;
+      skip = 1;
+    }
+    \$0 == \"${end}\" {
+      flag = 0;
+    }
+    flag == 1 && skip == 0 {
+      print \$0
+    }
+    
+    skip = 0;
+  " $0
+}
+
+init_myself
+
+while [[ "$1"x != ""x ]];do
+  case "$1" in
+  
+    cfg=* )
+      arg="${1##cfg=}"
+      if [[ "$arg"x != ""x ]];then
+        klinux_parse_cfg "$arg"
+      fi 
+      shift ;;
+      
+    disktab=* )
+      arg="${1##disktab=}"
+      if [[ "$arg"x != ""x && -f "$arg" ]];then
+        disktab_user="$arg"
+      else
+        rprint " * [Loader] 磁盘表文件不存在."
+      fi
+      shift ;;
+      
+    device=* )
+      arg="${1##device=}"
+      if [[ "$arg"x != ""x ]];then
+        device="$arg"
+      fi
+      shift ;;
+      
+    mnt=* )
+      arg="${1##mnt=}"
+      if [[ "$arg"x != ""x ]];then
+        mnt="$arg"
+        update_var_depend_mnt
+      fi
+      shift ;;
+      
+    type=* )
+      arg="${1##type=}"
+      if [[ "$arg"x != ""x ]];then
+        device_type="$arg"
+      fi
+      shift ;;
+    
+    wait=* )
+      arg="${1##wait=}"
+      argtmp="${arg//[0-9]/}"
+      if [[ "$argtmp"x == ""x ]];then
+      	wait_time="$arg"
+      fi
+      shift ;;
+    
+    busybox=* )
+      arg="${1##busybox=}"
+      if [[ "$arg"x != ""x ]];then
+        bbox="$arg"
+      fi
+      shift ;;
+      
+    "--no-sdcard0" ) 
+      shift
+      nosd0=true ;;
+    
+    "--no-sdcard1" ) 
+      shift
+      nosd1=true ;;
+    
+    "--no-sdcard" ) 
+      shift
+      nosd0=true
+      nosd1=true ;;
+    
+    "--no-clear" )
+      shift
+      noclear=true ;;
+      
+    "--kill" ) 
+      shift
+      klinux_kill
+      exit ;;
+            
+    "--mount" )
+      shift
+      klinux_mount
+      if [[ -f $disktab_user ]];then
+        cat $disktab_user >> $disktab_tmp
+      fi
+      klinux_disk $disktab_tmp
+      exit ;;
+            
+    "--umount" )
+      shift
+      klinux_udisk
+      klinux_umount
+      exit ;;
+          
+    "--network" )
+      shift
+      klinux_network
+      exit ;;
+            
+    "--shutdown" | "--close" )
+      klinux_kill
+      klinux_udisk
+      klinux_umount
+      exit ;;
+            
+    "--boot" | "--open" )
+      klinux_mount
+      if [[ -f $disktab_user ]];then
+        cat $disktab_user >> $disktab_tmp
+      fi
+      klinux_disk $disktab_tmp
+      klinux_chroot
+      exit ;;
+            
+    "--create" )
+      shift
+      klinux_create "$@"
+      exit $? ;;
+      
+    "--install-loader" )
+      shift
+      klinux_install_loader "$@"
+      exit $? ;;
+      
+    "--help" )
+      klinux_help 
+      exit 0 ;;
+      
+    "--version" )
+      klinux_version
+      exit 0 ;;
+            
+    "--" )
+      shift
+      break ;;
+    * )
+      error_exit "不支持的命令: $1"
+      exit ;;
+  esac
+done
+
+# 如果while中没处理到任何参数，默认运行
+klinux_main $@
+
+exit $?
+# end("host_loader");
+
+
+# section("target_loader");
+#!/bin/bash
+
+error_exit() {
+    echo " * [Loader] 错误: $@"
+    exit 1
+}
+
+
+mydir=/boot/krub.d
+myconfd=$mydir/conf.d
+myetc=$mydir/etc
+
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/sbin:/usr/local/bin:/usr/games
+export TERM=linux
+export HOME=/root
+export USER=root
+
+already_init=false
+
+INIT=/bin/bash
+INIT_ARG="--login -i -"
+
+while [[ ! -z "$1" ]];do
+    
+    case "$1" in
+        
+        init=* )
+            pre="$(which ${1##*init=})"
+            if test -x "$pre"; then
+                INIT_ARG=
+                INIT="$pre"
+            fi
+            unset pre
+            shift 1 ;;
+            
+        initarg=* )
+            INIT_ARG="${1##*initarg=}"
+            shift 1 ;;
+            
+        path=* )
+            pa="${1##*path=}"
+            export PATH="$PATH:$pa"
+            shift 1 ;;
+            
+        term=* )
+            export TERM="${1##*term=}"
+            shift 1 ;;
+            
+        home=* )
+            pre="${1##*home=}"
+            if test -d "$pre";then 
+                export HOME="$pre"
+            fi
+            unset pre
+            shift 1 ;;
+            
+        user=* )
+            pre="${1##*user=}"
+            if ! grep "$pre" /etc/shadow &>/dev/null;then
+              error_echo "无法找到指定用户: $pre"
+            fi
+            export USER="$pre"
+            export HOME=/home/$USER
+            shift 1 ;;
+            
+        already-init )
+            shift 1
+            already_init=true ;;
+            
+        * )
+            error_exit "$1: 暂不支持的启动参数"
+            exit 1 ;;
+        
+    esac
+    
+done
+
+
+if [[ "$already_init" != true ]];then
+    if ! test -f $myconfd/DONOTDELETE.txt;  then
+        echo " * 正在为第一次启动进行配置..."
+        echo "nameserver 8.8.8.8" > /etc/resolv.conf || {
+            error_exit "无法写入 resolv.conf 文件!"
+        }
+        echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+        echo "127.0.0.1 localhost" > /etc/hosts || {
+            error_exit "无法写入 hosts 文件!";
+        }
+        chmod a+rw  /dev/null &>/dev/null
+        chmod a+rw  /dev/ptmx &>/dev/null
+        chmod 1777 /tmp &>/dev/null
+        chmod 1777 /dev/shm &>/dev/null
+        chmod +s /usr/bin/sudo &>/dev/null
+        groupadd -g 3001 android_bt &>/dev/null
+        groupadd -g 3002 android_bt-net &>/dev/null
+        groupadd -g 3003 android_inet &>/dev/null
+        groupadd -g 3004 android_net-raw &>/dev/null
+        mkdir /var/run/dbus &>/dev/null
+        chmod 755 /var/run/dbus &>/dev/null
+        echo "shm /dev/shm tmpfs nodev,nosuid,noexec 0 0" >> /etc/fstab
+        cd ~
+        groupadd -g 1015 sdcard-rw &>/dev/null
+        echo "boot set donotdelete" >> $myconfd/DONOTDELETE.txt
+        
+    fi
+    if ! test -f $myconfd/welcome_showed;then
+      if test -f $myetc/welcome;then
+        cat $myetc/welcome
+        echo "showed" > $myconfd/welcome_showed
+      fi
+    fi
+fi
+
+
+
+if [[ "$already_init" != true ]];then
+    rm /tmp/.X* &>/dev/null
+    rm /tmp/.X11-unix/X* &>/dev/null
+    rm /root/.vnc/localhost* &>/dev/null
+    rm /var/run/dbus/pid &>/dev/null
+    rm /var/run/reboot-required* &>/dev/null
+fi
+
+ln -s /bin/true /sbin/initctl &>/dev/null
+
+echo
+
+cd $HOME
+su $USER - -c "$INIT $INIT_ARG"
+
+clear
+echo " * 关闭 Linux ARM"
+echo
+# end("target_loader");
+
+
+
+# section("welcome_text");
+
+    _  ___      _                  
+   | |/ / |    (_)                 
+   | ' /| |     _ _ __  _   ___  __
+   |  < | |    | | '_ \| | | \ \/ /
+   | . \| |____| | | | | |_| |>  < 
+   |_|\_\______|_|_| |_|\__,_/_/\_\
+
+
+   Hello Klinux!
+   感谢您使用 Klinux 作为加载器
+   ---------------------------------------
+   祝您愉快使用！
+   
+   发送 Bug: Joker <kiva515@foxmail.com>
+
+
+
+# end("welcome_text");
+
+# section("version_text");
+Klinux - 0.3(201512110)
+# end("version_text");
+
+# section("help_text");
+Klinux: A fast and smart linux-arm loader
+usage: linux [options] [command]
+
+options:
+  device=DEVICE    使用 DEVICE 作为根设备
+  type=FSTYPE      使用 FSTYPE 作为根设备文件系统类型
+  mnt=DIR          使用 DIR 作为挂载点
+  cfg=FILE         使用 FILE 作为配置文件
+  disktab=FILE     使用 FILE 作为额外的挂载表
+  wait=SECONDS     使用 SECONDS 作为等待启动时间
+  
+  --no-sdcard0     不挂载 /storage/sdcard0
+  --no-sdcard1     不挂载 /storage/sdcard1
+  --no-sdcard      不挂载全部 sdcard 设备
+ 
+command:
+  --mount          只执行挂载文件系统的操作
+  --unmount        只执行卸载文件系统的操作
+  --kill           杀死所有占用文件系统的进程
+  --boot           启动 linux-arm [默认操作]
+  --shutdown       退出 linux-arm
+  --open           与 --boot 相同
+  --close          与 --shutdown 相同
+  --create         创建一个可启动的 linux-arm
+  --install-loader 为 linux-arm 安装启动文件
+  
+如果没有指定任何一个 command
+则默认执行参数 --boot 的操作
+
+# end("help_text");

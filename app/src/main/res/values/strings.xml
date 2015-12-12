@@ -1,0 +1,68 @@
+<!--
+  ~     Copyright (C) 2015  Joker
+  ~
+  ~     This program is free software; you can redistribute it and/or modify
+  ~     it under the terms of the GNU General Public License as published by
+  ~     the Free Software Foundation; either version 2 of the License, or
+  ~     (at your option) any later version.
+  ~
+  ~     This program is distributed in the hope that it will be useful,
+  ~     but WITHOUT ANY WARRANTY; without even the implied warranty of
+  ~     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  ~     GNU General Public License for more details.
+  ~
+  ~     You should have received a copy of the GNU General Public License along
+  ~     with this program; if not, write to the Free Software Foundation, Inc.,
+  ~     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  -->
+
+<resources>
+    <string-array name="fs_types">
+        <item>ext4</item>
+        <item>ext3</item>
+        <item>ext2</item>
+    </string-array>
+
+    <string-array name="terminals">
+        <item>linux</item>
+        <item>screen</item>
+        <item>xterm</item>
+    </string-array>
+
+    <string-array name="profile_options">
+        <item>@string/action_launch</item>
+        <item>@string/delete</item>
+    </string-array>
+
+    <string name="app_name">Oh My Linux</string>
+    <string name="action_launch">Launch</string>
+    <string name="action_save">Save</string>
+    <string name="action_close">Close</string>
+    <string name="drawer_open">Open Drawer</string>
+    <string name="drawer_close">Close Drawer</string>
+    <string name="no_profile">No Profile</string>
+    <string name="profiles">All Profiles</string>
+    <string name="log_console">Log Console</string>
+    <string name="device_path_cannot_be_null">Device Path cannot be null!</string>
+    <string name="nick_name_cannot_be_null">Nick Name cannot be null!</string>
+    <string name="no_profile_is_selected">No Profile is selected</string>
+    <string name="find">Find</string>
+    <string name="nick_name">Nick Name</string>
+    <string name="device_path">Device Path</string>
+    <string name="fs_type">File System Type</string>
+    <string name="mount_point">Mount Point</string>
+    <string name="config_file">Config File</string>
+    <string name="disk_table_file">Disk Table File</string>
+    <string name="wait_seconds">Wait Seconds</string>
+    <string name="mount_sd0">Mount sdcard0</string>
+    <string name="mount_sd1">Mount sdcard1</string>
+    <string name="init_program">Init Program</string>
+    <string name="init_program_args">Init Program Arguments</string>
+    <string name="terminal_info">Terminal Info</string>
+    <string name="launch_field">Launch field!</string>
+    <string name="install">Install</string>
+    <string name="no_terminal_found">No terminal application was found</string>
+    <string name="delete">Delete</string>
+    <string name="save_successfully">Save Successfully</string>
+    <string name="save_failed">Save Field</string>
+</resources>

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~     Copyright (C) 2015  Joker
+  ~
+  ~     This program is free software; you can redistribute it and/or modify
+  ~     it under the terms of the GNU General Public License as published by
+  ~     the Free Software Foundation; either version 2 of the License, or
+  ~     (at your option) any later version.
+  ~
+  ~     This program is distributed in the hope that it will be useful,
+  ~     but WITHOUT ANY WARRANTY; without even the implied warranty of
+  ~     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  ~     GNU General Public License for more details.
+  ~
+  ~     You should have received a copy of the GNU General Public License along
+  ~     with this program; if not, write to the Free Software Foundation, Inc.,
+  ~     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  -->
+
+<resources>
+    <string-array name="fs_types">
+        <item>ext4</item>
+        <item>ext3</item>
+        <item>ext2</item>
+    </string-array>
+
+    <string-array name="terminals">
+        <item>linux</item>
+        <item>screen</item>
+        <item>xterm</item>
+    </string-array>
+
+    <string name="app_name">Oh My Linux</string>
+    <string name="action_close">关闭</string>
+    <string name="action_launch">启动</string>
+    <string name="action_save">保存</string>
+    <string name="config_file">配置文件</string>
+    <string name="device_path">设备路径</string>
+    <string name="device_path_cannot_be_null">设备路径不可为空！</string>
+    <string name="disk_table_file">额外磁盘表</string>
+    <string name="drawer_close">关闭侧滑</string>
+    <string name="drawer_open">打开侧滑</string>
+    <string name="find">查找</string>
+    <string name="fs_type">文件系统类型</string>
+    <string name="init_program">初始化程序</string>
+    <string name="init_program_args">初始化程序参数</string>
+    <string name="log_console">日志控制台</string>
+    <string name="mount_point">挂载点</string>
+    <string name="mount_sd0">挂载 sdcard0</string>
+    <string name="mount_sd1">挂载 sdcard1</string>
+    <string name="nick_name">昵称</string>
+    <string name="nick_name_cannot_be_null">昵称不可为空！</string>
+    <string name="no_profile">没有配置文件</string>
+    <string name="no_profile_is_selected">没有选中的配置文件</string>
+    <string name="profiles">全部配置文件</string>
+    <string name="terminal_info">终端类型</string>
+    <string name="wait_seconds">读取超时</string>
+    <string name="launch_field">启动失败</string>
+    <string name="no_terminal_found">没有找到适合的终端应用</string>
+    <string name="install">安装</string>
+    <string name="delete">删除</string>
+    <string name="save_successfully">保存成功</string>
+    <string name="save_failed">保存失败</string>
+</resources>
