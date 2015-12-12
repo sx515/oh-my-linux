@@ -393,7 +393,7 @@ public class MainActivity extends AppCompatActivity implements L.LogCallback {
      */
     private void doLaunch(LinuxProfile profile) {
         String command = LaunchUtils.createTerminalCommand(this, profile);
-        Intent i = LaunchUtils.createTerminalIntent(command);
+        Intent i = LaunchUtils.createTerminalIntent(profile.getNickName(), command);
 
         try {
             profile.getOmlInterface().onLaunch(this, profile);

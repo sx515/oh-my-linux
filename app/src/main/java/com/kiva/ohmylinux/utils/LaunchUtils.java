@@ -109,13 +109,15 @@ public class LaunchUtils {
     /**
      * 创建一个打开终端并且执行指定命令的 Intent
      *
+     * @param windowTitle 新窗口的名称，可以为null
      * @param initCommand 执行的命令
      * @return 打开终端的Intent
      */
-    public static Intent createTerminalIntent(String initCommand) {
+    public static Intent createTerminalIntent(String windowTitle, String initCommand) {
         Intent i = new Intent();
         i.setAction("jackpal.androidterm.RUN_SCRIPT");
         i.setClassName("com.romide.terminal", "com.romide.terminal.activity.RemoteInterface");
+        i.putExtra("jackpal.androidterm.iWindowTitle", windowTitle);
         i.putExtra("jackpal.androidterm.iInitialCommand", initCommand);
         return i;
     }

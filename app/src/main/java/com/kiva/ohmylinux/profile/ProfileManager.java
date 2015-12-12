@@ -96,19 +96,17 @@ public class ProfileManager {
      * @return 是否成功
      */
     public boolean saveProfile(LinuxProfile profile) {
-        File profileDirectory = getProfileDir();
+        File profileDir = getProfileDir(profile);
 
-        if (profileDirectory == null) {
+        if (profileDir == null) {
             return false;
         }
 
-        File profileDir = new File(profileDirectory, profile.getNickName());
         if (!FileUtils.mkdir(profileDir)) {
             return false;
         }
 
         File profileOml = new File(profileDir, "profile.oml");
-
         return FileUtils.writeFile(profileOml, profile.toOml().getBytes());
     }
 
